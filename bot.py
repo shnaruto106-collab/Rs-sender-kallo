@@ -1,4 +1,4 @@
-import logging, time, re
+import logging, time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters)
 from telegram.constants import ParseMode
@@ -49,7 +49,6 @@ async def start(update, ctx):
         u = update.effective_user
         db.save_user(u.id, u.username, u.first_name)
         
-        # Basic plan auto-assign
         if not db.get_user_plan(u.id):
             basic = next((p for p in db.list_plans() if p[3] == 0), None)
             if basic: db.set_user_plan(u.id, basic[0])
@@ -105,7 +104,6 @@ async def on_cb(update, ctx):
                     left = int((cd - (time.time()-last))/60)
                     await q.edit_message_text(f"⏱ Cooldown: *{left} min* left.", parse_mode=ParseMode.MARKDOWN, reply_markup=kb.back()); return
             
-            # 🚨 মেসেজ আপডেট
             await q.edit_message_text("📧 Send the *username* to reset (email support added):",
                                        parse_mode=ParseMode.MARKDOWN, reply_markup=kb.back())
             PENDING[u.id] = {"action": "reset"}; return
@@ -375,21 +373,29 @@ async def on_text(update, ctx):
                     left = int((cd - (time.time()-last))/60)
                     await update.message.reply_text(f"⏱ Cooldown: {left} min left."); return
             
-            # 🚨 ফিক্স: ইমেইল দিলে @ এর আগের অংশটুকু নিবে
             target_username = txt.split("@")[0] if "@" in txt else txt
             
             msg = await update.message.reply_text("⏳ Sending...")
-            res = U.send_reset(target_username)
+            
+            # 🚨 Async Await Call
+            res = await U.send_reset(target_username)
+            
             db.log_reset(u.id, target_username, res)
             db.inc_daily(u.id); db.set_last_reset(u.id, int(time.time()))
             
-            if res.startswith("email:"): out = f"✅ *Sent!*\n📧 `{res.split(':',1)[1]}`"
-            elif res == "phone": out = "✅ *Sent via phone!*"
-            elif res == "error:not_found": out = "❌ Not found. (Check username)"
-            elif res == "error:rate_limited": out = "⚠️ IP Rate Limited. Try again later."
-            elif res == "error:proxy_dead": out = "⚠️ Proxy Dead. Try again."
-            elif res == "error:timeout": out = "⚠️ Timeout. Try again."
-            else: out = f"⚠️ `{res}`"
+            # 🚨 New Logic Response
+            if res == "success": 
+                out = f"✅ *Reset email sent successfully!*\nCheck your inbox/spam."
+            elif res == "error:not_found": 
+                out = "❌ Not found. (Check username/email)"
+            elif res == "error:rate_limited": 
+                out = "⚠️ IP Rate Limited. Try again later."
+            elif res == "error:ip_blocked":
+                out = "⚠️ IP Blocked by Instagram. Try later."
+            elif res == "error:timeout":
+                out = "⚠️ Request Timed Out."
+            else: 
+                out = f"⚠️ `{res}`"
             
             await msg.edit_text(out, parse_mode=ParseMode.MARKDOWN, reply_markup=kb.back()); 
             return

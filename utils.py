@@ -1,57 +1,54 @@
-import requests
-import uuid
+import aiohttp
+import re
 import random
 import string
-import re
-import time
+import asyncio
 
-PROXIES = [None]
-
-def send_reset(target):
-    proxy = random.choice(PROXIES)
-    proxies = {"http": proxy, "https": proxy} if proxy else None
-
-    url = "https://i.instagram.com/api/v2/accounts/send_password_reset/"
-    
-    data = {
-        "_csrftoken": "".join(random.choices(string.ascii_letters + string.digits, k=32)),
-        "username": target,
-        "guid": str(uuid.uuid4()),
-        "device_id": str(uuid.uuid4())
-    }
+async def send_reset(target):
+    """
+    Instagram Password Reset via Web API (V1)
+    """
+    url = "https://www.instagram.com/api/v1/accounts/send_recovery_flow_email/"
     
     headers = {
-        "user-agent": (
-            f"Instagram 150.0.0.0.000 Android (29/10; 300dpi; 720x1440; "
-            f"{''.join(random.choices(string.ascii_letters + string.digits, k=16))}/"
-            f"{''.join(random.choices(string.ascii_letters + string.digits, k=16))}; "
-            f"{''.join(random.choices(string.ascii_letters + string.digits, k=16))}; "
-            f"{''.join(random.choices(string.ascii_letters + string.digits, k=16))}; "
-            f"{''.join(random.choices(string.ascii_letters + string.digits, k=16))}; en_GB;)"
-        )
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Referer": "https://instagram.com/accounts/password/reset/",
+        "Origin": "https://instagram.com",
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
     }
 
-    time.sleep(random.uniform(1.0, 3.0))
+    # Input চেক (ইমেইল নাকি ইউজারনেম)
+    is_email = "@" in target
+    data = {
+        "email": target if is_email else "",
+        "username": target if not is_email else "",
+        "user_id": "",
+        "query": target
+    }
 
     try:
-        response = requests.post(url, headers=headers, data=data, proxies=proxies, timeout=20)
-        text = response.text.lower()
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=data, headers=headers, timeout=20) as response:
+                status = response.status
+                text = await response.text()
+                
+                # FadeHost লগে দেখার জন্য
+                print(f"DEBUG: {status} - {text[:100]}")
 
-        # 🚨 DEBUG লাইন
-        print(f"DEBUG: {response.status_code} - {response.text}") 
+                if status in [200, 201]:
+                    return "success"
+                elif status == 404:
+                    return "error:not_found"
+                elif status == 429:
+                    return "error:rate_limited"
+                elif "<!doctype html>" in text.lower():
+                    return "error:ip_blocked"
+                else:
+                    return f"error:{status}"
 
-        if "obfuscated_email" in text:
-            ev = re.search(r'[a-zA-Z0-9\*\._%+-]+@[a-zA-Z0-9\.-]+\.[a-zA-Z]{2,}', response.text)
-            if ev: return f"email:{ev.group(0)}"
-            return "phone"
-        elif response.status_code == 404 or "not found" in text:
-            return "error:not_found"
-        elif "rate limit" in text or response.status_code == 429:
-            return "error:rate_limited"
-        elif "obfuscated_phone" in text:
-            return "phone"
-        else:
-            return f"error:{response.status_code}"
-
+    except asyncio.TimeoutError:
+        return "error:timeout"
     except Exception as e:
         return f"error:{str(e)[:15]}"

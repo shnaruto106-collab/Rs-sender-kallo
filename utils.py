@@ -5,10 +5,7 @@ import string
 import re
 import time
 
-# 🚨 IP ব্লক এড়াতে চাইলে এখানে প্রক্সি দিতে পারেন (যেমন: "http://ip:port")
-PROXIES = [
-    None 
-]
+PROXIES = [None]
 
 def send_reset(target):
     proxy = random.choice(PROXIES)
@@ -40,12 +37,13 @@ def send_reset(target):
         response = requests.post(url, headers=headers, data=data, proxies=proxies, timeout=20)
         text = response.text.lower()
 
+        # 🚨 DEBUG লাইন
+        print(f"DEBUG: {response.status_code} - {response.text}") 
+
         if "obfuscated_email" in text:
             ev = re.search(r'[a-zA-Z0-9\*\._%+-]+@[a-zA-Z0-9\.-]+\.[a-zA-Z]{2,}', response.text)
-            if ev:
-                return f"email:{ev.group(0)}"
+            if ev: return f"email:{ev.group(0)}"
             return "phone"
-            
         elif response.status_code == 404 or "not found" in text:
             return "error:not_found"
         elif "rate limit" in text or response.status_code == 429:
@@ -55,9 +53,5 @@ def send_reset(target):
         else:
             return f"error:{response.status_code}"
 
-    except requests.exceptions.ProxyError:
-        return "error:proxy_dead"
-    except requests.exceptions.Timeout:
-        return "error:timeout"
     except Exception as e:
         return f"error:{str(e)[:15]}"

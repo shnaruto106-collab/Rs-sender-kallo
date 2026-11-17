@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 PENDING = {}
 def is_owner(uid): return uid == C.OWNER_ID
 
-# ---------- force-sub ----------
+# ---------- force-sub check ----------
 async def check_fs(bot, uid):
     missing = []
     try: subs = db.get_force_subs()
@@ -277,15 +277,31 @@ async def on_cb(update, ctx):
             txt = "📋 Admins:\n" + ("\n".join(f"• `{x}`" for x in a) if a else "none")
             await q.edit_message_text(txt, parse_mode=ParseMode.MARKDOWN, reply_markup=kb.back("own_admins")); return
 
-        # ---- force-sub mgmt ----
+        # ---- force-sub mgmt (ADVANCED) ----
         if d == "own_fs" and is_owner(u.id):
             k = [[InlineKeyboardButton("➕ Add", callback_data="fs_add"), InlineKeyboardButton("➖ Remove", callback_data="fs_rm")], [InlineKeyboardButton("📋 List", callback_data="fs_list")], [InlineKeyboardButton("🔙 Back", callback_data="owner_panel")]]
             await q.edit_message_text("📢 *Force-Sub*", parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(k)); return
         if d == "fs_add" and is_owner(u.id):
-            await q.edit_message_text("Send: `<@chat_id> | <Name> | <https://t.me/...>`", parse_mode=ParseMode.MARKDOWN, reply_markup=kb.back("own_fs"))
-            PENDING[u.id] = {"action":"fs_add"}; return
+            # নতুন লজিক: সরাসরি চ্যানেলের মেসেজ ফরওয়ার্ড করতে বলা হচ্ছে
+            await q.edit_message_text(
+                "📢 *Add Force-Sub*\n\n"
+                "➡️ 1. প্রথমে আপনার চ্যানেল বা গ্রুপে বটকে অ্যাডমিন বানান।\n"
+                "➡️ 2. তারপর চ্যানেল/গ্রুপের যেকোনো ১টি মেসেজ এখানে ফরওয়ার্ড করুন।\n\n"
+                "*(বট অটোমেটিক চ্যানেলের আইডি, নাম এবং লিংক বের করে নিবে)*", 
+                parse_mode=ParseMode.MARKDOWN, 
+                reply_markup=kb.back("own_fs")
+            )
+            PENDING[u.id] = {"action":"fs_add_forward"}; return
         if d == "fs_rm" and is_owner(u.id):
-            await q.edit_message_text("Send `<@chat_id>`:", parse_mode=ParseMode.MARKDOWN, reply_markup=kb.back("own_fs")); PENDING[u.id] = {"action":"fs_rm"}; return
+            s = db.get_force_subs()
+            if not s: await q.edit_message_text("❌ No force-subs to remove.", reply_markup=kb.back("own_fs")); return
+            k = [[InlineKeyboardButton(f"❌ {n} ({c})", callback_data=f"fs_rm_do:{c}")] for c, n, u_ in s]
+            k.append([InlineKeyboardButton("🔙 Back", callback_data="own_fs")])
+            await q.edit_message_text("➖ *Select a channel to remove:*", parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(k)); return
+        if d.startswith("fs_rm_do:") and is_owner(u.id):
+            chat_id = d.split(":")[1]
+            db.remove_force_sub(chat_id)
+            await q.edit_message_text("✅ Removed.", reply_markup=kb.back("own_fs")); return
         if d == "fs_list" and is_owner(u.id):
             s = db.get_force_subs()
             txt = "📋 Force-Subs:\n" + ("\n".join(f"• `{c}` — {n}" for c,n,u_ in s) if s else "none")
@@ -356,8 +372,42 @@ async def on_cb(update, ctx):
 # ---------- text handler ----------
 async def on_text(update, ctx):
     u = update.effective_user
-    if not update.message or not update.message.text: return
+    if not update.message: return
+    
+    # 🚨 অ্যাডভান্সড ফোর্স সাব (Forward Message Logic)
     st = PENDING.get(u.id)
+    if st and st["action"] == "fs_add_forward":
+        if not update.message.forward_from_chat:
+            await update.message.reply_text("❌ Please forward a message from a Channel or Group (not a user).")
+            return
+        
+        chat = update.message.forward_from_chat
+        chat_id = chat.id
+        name = chat.title
+        
+        # লিংক জেনারেট করা
+        if chat.username:
+            url = f"https://t.me/{chat.username}"
+        else:
+            # প্রাইভেট চ্যানেলের জন্য ইনভাইট লিংক বানানোর চেষ্টা
+            try:
+                link = await ctx.bot.export_chat_invite_link(chat_id)
+                url = link
+            except Exception:
+                await update.message.reply_text("❌ Could not generate invite link. Make sure bot is Admin in that channel.")
+                return
+
+        db.add_force_sub(str(chat_id), name, url)
+        PENDING.pop(u.id, None)
+        
+        await update.message.reply_text(
+            f"✅ *Force-Sub Added!*\n\n📢 Name: {name}\n🆔 ID: `{chat_id}`\n🔗 Link: {url}",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=kb.back("own_fs")
+        )
+        return
+
+    if not update.message.text: return
     if not st: return
     txt = update.message.text.strip(); act = st["action"]
 
@@ -376,14 +426,11 @@ async def on_text(update, ctx):
             target_username = txt.split("@")[0] if "@" in txt else txt
             
             msg = await update.message.reply_text("⏳ Sending...")
-            
-            # 🚨 Async Await Call
             res = await U.send_reset(target_username)
             
             db.log_reset(u.id, target_username, res)
             db.inc_daily(u.id); db.set_last_reset(u.id, int(time.time()))
             
-            # 🚨 New Logic Response
             if res == "success": 
                 out = f"✅ *Reset email sent successfully!*\nCheck your inbox/spam."
             elif res == "error:not_found": 
@@ -444,17 +491,6 @@ async def on_text(update, ctx):
         elif act == "adm_rm":
             db.remove_admin(int(txt))
             await update.message.reply_text(f"✅ Admin removed: `{txt}`", parse_mode=ParseMode.MARKDOWN, reply_markup=kb.back("own_admins"))
-        
-        elif act == "fs_add":
-            parts = [x.strip().replace('<', '').replace('>', '') for x in txt.split("|")]
-            if len(parts) != 3: raise ValueError("Format must be: @chat | Name | URL")
-            chat_id, name, url = parts
-            if not url.startswith("http"): url = f"https://t.me/{url.replace('@','')}"
-            db.add_force_sub(chat_id, name, url)
-            await update.message.reply_text("✅ Force-sub added.", reply_markup=kb.back("own_fs"))
-        elif act == "fs_rm":
-            db.remove_force_sub(txt.strip())
-            await update.message.reply_text("✅ Removed.", reply_markup=kb.back("own_fs"))
         elif act == "plan_add":
             parts = [x.strip() for x in txt.split("|")]
             if len(parts) != 6: raise ValueError("Need 6 fields: name | emoji | price | daily_limit | cooldown | bonus")
@@ -515,6 +551,7 @@ def main():
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CallbackQueryHandler(on_cb))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+        app.add_handler(MessageHandler(filters.FORWARDED, on_text)) # 🚨 নতুন: ফরওয়ার্ড মেসেজ ধরার জন্য
         app.add_error_handler(on_error)
         log.info("Bot running successfully...")
         app.run_polling(allowed_updates=Update.ALL_TYPES)

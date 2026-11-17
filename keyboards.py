@@ -57,11 +57,9 @@ def buy_plan_menu():
     for pid, name, emoji, price, lim, cool, bonus in db.list_plans():
         lim_txt = "∞" if lim == -1 else f"{lim}/day"
         if price == 0:
-            rows.append([InlineKeyboardButton(f"{emoji} {name} — {lim_txt} · FREE ✅",
-                                              callback_data="plan_free_info")])
+            rows.append([InlineKeyboardButton(f"{emoji} {name} — {lim_txt} · FREE ✅", callback_data="plan_free_info")])
         else:
-            rows.append([InlineKeyboardButton(f"{emoji} {name} — {lim_txt} · {price}💳",
-                                              callback_data=f"plan_buy:{pid}")])
+            rows.append([InlineKeyboardButton(f"{emoji} {name} — {lim_txt} · {price}💳", callback_data=f"plan_buy:{pid}")])
     rows.append([InlineKeyboardButton("🔙 Back", callback_data="home")])
     return InlineKeyboardMarkup(rows)
 
